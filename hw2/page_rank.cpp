@@ -16,36 +16,8 @@
 // convergence: page-rank algorithm's convergence threshold
 //
 void pageRank(Graph g, double *solution, double damping, double convergence) {
-
-    /* Implement the page rank algorithm here.  You
-    are expected to parallelize the algorithm using openMP.  Your
-    solution may need to allocate (and free) temporary arrays.
-
-     Basic page rank pseudocode:
-
-    // initialization: see example code below
-    score_old[vi] = 1/numNodes;
-
-    while (!converged and iter < MAXITER) {
-
-      // compute score_new[vi] for all nodes vi:
-      score_new[vi] = sum over all nodes vj reachable from incoming edges
-              { score_old[vj] / number of edges leaving vj  }
-      score_new[vi] = (damping * score_new[vi]) + (1.0-damping) / numNodes;
-
-      score_new[vi] += sum over all nodes vj with no outgoing edges
-              { damping * score_old[vj] / numNodes }
-
-      // compute how much per-node scores have changed
-      // quit once algorithm has converged
-      global_diff = sum over all nodes vi { abs(score_new[vi] - score_old[vi])
-    }; converged = (global_diff < convergence)
-    }
-    */
-
     // initialize vertex weights to uniform probability. Double
     // precision scores are used to avoid underflow for large graphs
-
     int numNodes = num_nodes(g);
     double equal_prob = 1.0 / numNodes;
     double *solution_new = new double[numNodes];
@@ -55,33 +27,41 @@ void pageRank(Graph g, double *solution, double damping, double convergence) {
     double broadcastScore = 0.0;
     double globalDiff = 0.0;
     int iter = 0;
+    const Vertex *in_end;
+    const Vertex *in_begin;
 
+    #pragma omp parallel for
     for (int i = 0; i < numNodes; ++i) {
         solution[i] = equal_prob;
     }
+
     while (!converged && iter < MAXITER) {
         iter++;
         broadcastScore = 0.0;
         globalDiff = 0.0;
-        for (int i = 0; i < numNodes; ++i) {
-            score_new[i] = 0.0;
 
-            if (outgoing_size(g, i) == 0) {
-                broadcastScore += score_old[i];
-            }
-            const Vertex *in_begin = incoming_begin(g, i);
-            const Vertex *in_end = incoming_end(g, i);
-            for (const Vertex *v = in_begin; v < in_end; ++v) {
-                score_new[i] += score_old[*v] / outgoing_size(g, *v);
-            }
-            score_new[i] =
-                damping * score_new[i] + (1.0 - damping) * equal_prob;
+        #pragma omp parallel for reduction(+:broadcastScore)
+        for (int j = 0; j < numNodes; j++){
+            if (outgoing_size(g, j) == 0) broadcastScore += damping * score_old[j] / numNodes;
         }
-        for (int i = 0; i < numNodes; ++i) {
-            score_new[i] += damping * broadcastScore * equal_prob;
-            globalDiff += std::abs(score_new[i] - score_old[i]);
-        }
-        converged = (globalDiff < convergence);
+
+        #pragma omp parallel for reduction(+:globalDiff)
+        for (int i = 0; i < numNodes; i++){
+            const Vertex* in_start = incoming_begin(g, i);
+            const Vertex* in_end = incoming_end(g, i);
+            double sum = 0.0;
+            for (const Vertex* v = in_start; v != in_end; v++){
+                sum += score_old[*v] / (double)outgoing_size(g, *v);
+            }
+
+            sum = (damping * sum) + (1.0 - damping) / numNodes;
+
+            sum += broadcastScore;
+	  score_new[i] = sum;
+	  globalDiff += fabs(sum - score_old[i]);
+      }
+
+        converged = globalDiff < convergence;
         std::swap(score_new, score_old);
     }
     if (score_new != solution) {
