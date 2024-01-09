@@ -2,7 +2,7 @@
 
 Cluster username: bds23-ghcstu08  
 Student name: Ng Tze Kean  
-Student type: Virutal Exchange student  
+Student type: Virtual Exchange student  
 
 ## Word Count
 
